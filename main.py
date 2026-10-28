@@ -22,7 +22,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
     
     def log_message(self, format, *args):
-        pass  # نسكتو اللوغات ديال HTTP
+        pass  # نسكتو اللوغات
 
 def run_http_server():
     port = int(os.getenv("PORT", 8080))
@@ -54,28 +54,30 @@ async def route_text(update, context):
     await update.message.reply_text("ℹ️ أرسل /start للبدء.")
 
 # ═══════════════════════════════════════════
+# post_init (باش نخلقو الجداول قبل تشغيل البوت)
+# ═══════════════════════════════════════════
+
+async def post_init(app):
+    log.info("🚀 جاري تهيئة قاعدة البيانات...")
+    await init_db()
+    log.info("✅ DB ready")
+    
+    from database import db
+    await db.register_user(config.ADMIN_ID, "ADMIN")
+    log.info("✅ ADMIN registered")
+
+# ═══════════════════════════════════════════
 # main
 # ═══════════════════════════════════════════
 
 def main():
     log.info("🚀 starting...")
 
-    # ✅ 1. نخلقو الجداول
-    asyncio.run(init_db())
-    log.info("✅ DB ready")
-
-    # ✅ 2. نسجلو الأدمن
-    async def _reg():
-        from database import db
-        await db.register_user(config.ADMIN_ID, "ADMIN")
-    asyncio.run(_reg())
-    log.info("✅ ADMIN registered")
-
-    # ✅ 3. نشغلو HTTP Server فـ thread (بلا aiohttp)
+    # ✅ 1. نشغلو HTTP Server فـ thread منفصل
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # ✅ 4. نجهزو البوت
-    app = Application.builder().token(config.BOT_TOKEN).build()
+    # ✅ 2. نجهزو البوت مع post_init
+    app = Application.builder().token(config.BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_cmd))
     app.add_handler(CommandHandler("status", handlers.status_cmd))
@@ -86,7 +88,7 @@ def main():
 
     log.info("🚀 البوت شغال!")
 
-    # ✅ 5. run_polling فـ الـ main thread
+    # ✅ 3. run_polling فـ الـ main thread (هو اللي كيتكلف بالـ event loop)
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
