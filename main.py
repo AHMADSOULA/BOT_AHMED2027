@@ -10,14 +10,17 @@ from utils.helpers import extract_urls
 
 log = get_logger("Main")
 
+
 async def post_init(app):
-    # ✅ نستناو init_db تكمل 100%
+    """هنا كنخلقو الجداول قبل أي حاجة أخرى"""
+    log.info("🚀 post_init: creating DB...")
     await init_db()
     log.info("✅ DB ready")
 
     from database import db
     await db.register_user(config.ADMIN_ID, "ADMIN")
     log.info("✅ ADMIN registered")
+
 
 async def route_text(update, context):
     from database import db
@@ -38,13 +41,15 @@ async def route_text(update, context):
 
     await update.message.reply_text("ℹ️ أرسل /start للبدء.")
 
+
 async def health_check(request):
     return web.Response(text="OK")
+
 
 async def main():
     log.info("🚀 starting...")
 
-    # ✅ نجهزو البوت
+    # ✅ نجهزو الـ App
     app = Application.builder().token(config.BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_cmd))
@@ -54,7 +59,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(handlers.button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
 
-    # ✅ نجهزو HTTP Server
+    # ✅ HTTP Server باش Render يلقى Port
     port = int(os.getenv("PORT", 8080))
     web_app = web.Application()
     web_app.router.add_get("/", health_check)
@@ -72,9 +77,11 @@ async def main():
     await app.updater.start_polling(drop_pending_updates=True)
 
     log.info("🚀 البوت شغال!")
-    
+
+    # ✅ نخليوه خدام ديما
     while True:
         await asyncio.sleep(3600)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
