@@ -78,11 +78,13 @@ async def set_session(user_id, sso_url, state):
         await db.execute("INSERT OR REPLACE INTO sessions (user_id, sso_url, state) VALUES (?, ?, ?)", (user_id, sso_url, state))
         await db.commit()
 
+# ✅ صلحنا هادي (كانت فيها غلط)
 async def get_session(user_id):
     async with aiosqlite.connect(config.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM sessions WHERE user_id=?", (user_id,))
-        return dict(await cur.fetchone()) if await cur.fetchone() else None
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 async def clear_session(user_id):
     async with aiosqlite.connect(config.DB_PATH) as db:
