@@ -1,6 +1,6 @@
 """
 automation/console.py
-كل خطوات Google Cloud Console
+كل خطوات Google Cloud Console — بلا تصوير عادي
 """
 import asyncio
 from playwright.async_api import expect
@@ -16,11 +16,10 @@ class CloudConsole:
         self.user_tag = user_tag or "@user"
 
     async def _shot(self, page, caption: str = ""):
-        """screenshot + send"""
+        """screenshot + send (غير عند الفشل)"""
         if not self.sender:
             return
         try:
-            import os
             path = f"/tmp/shot_{int(asyncio.get_event_loop().time()*1000)}.png"
             await page.screenshot(path=path, full_page=False, timeout=8000)
             with open(path, "rb") as f:
@@ -29,6 +28,7 @@ class CloudConsole:
                     log.info(f"📸 {caption}")
                 except Exception as e:
                     log.warning(f"⚠️ reply_photo: {e}")
+            import os
             try:
                 os.remove(path)
             except Exception:
@@ -37,11 +37,11 @@ class CloudConsole:
             log.warning(f"⚠️ _shot: {e}")
 
     # ═══════════════════════════════════════
-    # STEP 1 - TOS
+    # STEP 1
     # ═══════════════════════════════════════
 
     async def step1_welcome_screen(self, page):
-        log.info("🚀 step1 — TOS")
+        log.info("🚀 step1")
 
         try:
             await page.wait_for_load_state("networkidle", timeout=10000)
@@ -81,11 +81,11 @@ class CloudConsole:
             pass
 
     # ═══════════════════════════════════════
-    # STEP 2 - Terms Dialog
+    # STEP 2
     # ═══════════════════════════════════════
 
     async def step2_terms_dialog(self, page):
-        log.info("🚀 step2 — Terms")
+        log.info("🚀 step2")
 
         agree_btn = page.get_by_role("button", name="Agree and continue")
 
@@ -147,11 +147,11 @@ class CloudConsole:
                 pass
 
     # ═══════════════════════════════════════
-    # STEP 3 - Enable API
+    # STEP 3
     # ═══════════════════════════════════════
 
     async def step3_enable_api(self, page, project_id, authuser):
-        log.info("🚀 step3 — Enable API")
+        log.info("🚀 step3")
 
         api_url = (
             f"https://console.cloud.google.com/apis/library/"
@@ -185,16 +185,15 @@ class CloudConsole:
             log.warning(f"⚠️ step3: {e}")
 
     # ═══════════════════════════════════════
-    # STEP 4 - Create Cloud Run
+    # STEP 4 — مع region
     # ═══════════════════════════════════════
 
     async def step4_create_cloud_run(self, page, project_id, authuser, image, region="us-central1"):
-        log.info(f"🚀 step4 — Cloud Run ({region})")
-
         run_url = (
             f"https://console.cloud.google.com/run/create"
             f"?project={project_id}&authuser={authuser}&region={region}"
         )
+        log.info(f"🌐 step4 — region={region}")
 
         await page.goto(run_url, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(5000)
@@ -274,11 +273,11 @@ class CloudConsole:
                 raise RuntimeError(f"فشل Create: {e2}")
 
     # ═══════════════════════════════════════
-    # STEP 5 - Get Deployed URL
+    # STEP 5
     # ═══════════════════════════════════════
 
     async def step5_get_deployed_url(self, page):
-        log.info("⏳ step5 — انتظار الرابط")
+        log.info("⏳ step5")
 
         link_locator = page.locator('a[href*="run.app"]')
         try:
@@ -298,7 +297,7 @@ class CloudConsole:
                             if (href.includes('.run.app')) return href.split('?')[0].split('#')[0];
                         }
                         const body = document.body.innerText || '';
-                        const m = body.match(/https:\/\/[a-zA-Z0-9\-]+\.run\.app/);
+                        const m = body.match(/https:\\/\\/[a-zA-Z0-9\\-]+\\.run\\.app/);
                         if (m) return m[0];
                         return null;
                     }
