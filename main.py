@@ -11,17 +11,6 @@ from utils.helpers import extract_urls
 log = get_logger("Main")
 
 
-async def post_init(app):
-    """هنا كنخلقو الجداول قبل أي حاجة أخرى"""
-    log.info("🚀 post_init: creating DB...")
-    await init_db()
-    log.info("✅ DB ready")
-
-    from database import db
-    await db.register_user(config.ADMIN_ID, "ADMIN")
-    log.info("✅ ADMIN registered")
-
-
 async def route_text(update, context):
     from database import db
     user = update.effective_user
@@ -49,8 +38,17 @@ async def health_check(request):
 async def main():
     log.info("🚀 starting...")
 
-    # ✅ نجهزو الـ App
-    app = Application.builder().token(config.BOT_TOKEN).post_init(post_init).build()
+    # ✅ 1. نخلقو الجداول أولاً (قبل أي حاجة)
+    await init_db()
+    log.info("✅ DB ready")
+
+    # ✅ 2. نسجلو الأدمن
+    from database import db
+    await db.register_user(config.ADMIN_ID, "ADMIN")
+    log.info("✅ ADMIN registered")
+
+    # ✅ 3. نجهزو البوت (بلا post_init)
+    app = Application.builder().token(config.BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_cmd))
     app.add_handler(CommandHandler("status", handlers.status_cmd))
@@ -59,7 +57,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(handlers.button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
 
-    # ✅ HTTP Server باش Render يلقى Port
+    # ✅ 4. HTTP Server باش Render يلقى Port
     port = int(os.getenv("PORT", 8080))
     web_app = web.Application()
     web_app.router.add_get("/", health_check)
@@ -71,16 +69,9 @@ async def main():
     await site.start()
     log.info(f"✅ HTTP Server على port {port}")
 
-    # ✅ نشغلو البوت
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
-
+    # ✅ 5. نشغلو البوت (بـ run_polling بدل start_polling)
     log.info("🚀 البوت شغال!")
-
-    # ✅ نخليوه خدام ديما
-    while True:
-        await asyncio.sleep(3600)
+    await app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
