@@ -3,7 +3,6 @@ automation/console.py
 كل خطوات Google Cloud Console — بلا تصوير عادي
 """
 import asyncio
-import re
 from playwright.async_api import expect
 from utils.logger import get_logger
 
@@ -22,7 +21,7 @@ class CloudConsole:
             return
         try:
             path = f"/tmp/shot_{int(asyncio.get_event_loop().time()*1000)}.png"
-            await page.screenshot(path=path, full_page=False, timeout=15000, animations="disabled")
+            await page.screenshot(path=path, full_page=False, timeout=8000)
             with open(path, "rb") as f:
                 try:
                     await self.sender.reply_photo(photo=f, caption=caption[:1000])
@@ -42,77 +41,47 @@ class CloudConsole:
     # ═══════════════════════════════════════
 
     async def step1_welcome_screen(self, page):
-        """Scroll the Welcome page and click a normal, visible, enabled continuation button."""
+        """Handle the normal Google Welcome screen without forcing consent."""
         log.info("🚀 step1 — Welcome")
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=12000)
         except Exception:
             pass
         await page.wait_for_timeout(1200)
-        try:
-            await page.evaluate("""() => {
-                window.scrollTo(0, document.documentElement.scrollHeight);
-                for (const el of document.querySelectorAll('main, [role=main], article')) {
-                    if (el.scrollHeight > el.clientHeight + 10) el.scrollTop = el.scrollHeight;
-                }
-            }""")
-            await page.keyboard.press("End")
-            await page.wait_for_timeout(800)
-        except Exception as e:
-            log.warning(f"⚠️ scroll Welcome: {e}")
 
-        # Google account welcome pages commonly use the exact "I understand" action.
-        # Try semantic button lookup first, then exact visible text if the UI has no button role.
-        for label in ("I understand", "Next", "Continue", "Agree and continue"):
-            try:
-                button = page.get_by_role(
-                    "button",
-                    name=re.compile(r"^\\s*" + re.escape(label) + r"\\s*$", re.I)
-                ).first
-                if await button.is_visible(timeout=700) and await button.is_enabled():
-                    await button.click(timeout=5000)
-                    log.info(f"✅ Welcome button clicked: {label}")
-                    await page.wait_for_timeout(1500)
-                    return True
-            except Exception:
-                pass
-
-            try:
-                text_locator = page.get_by_text(
-                    re.compile(r"^\\s*" + re.escape(label) + r"\\s*$", re.I)
-                ).last
-                if await text_locator.is_visible(timeout=700):
-                    await text_locator.click(timeout=5000)
-                    log.info(f"✅ Welcome action clicked by visible text: {label}")
-                    await page.wait_for_timeout(1500)
-                    return True
-            except Exception:
-                pass
-
-        log.warning("⚠️ Welcome action not found/enabled; leaving page for manual review.")
-        return False
+        # Google Skills pages can show a blue "I understand" button.
+        # Try accessible selectors in the main page and its frames.
+        labels = ["I understand", "Got it", "Continue", "Next"]
+        for frame in page.frames:
+            for label in labels:
+                try:
+                    button = frame.get_by_role("button", name=label, exact=True).first
+                    if await button.is_visible(timeout=700):
+                        if await button.is_enabled():
+                            await button.click(timeout=2500)
+                            log.info(f"✅ Welcome button clicked: {label}")
+                            await page.wait_for_timeout(1200)
+                            return
+                except Exception:
+                    continue
+        log.info("ℹ️ No visible Welcome continuation button; page left for review")
 
     async def step2_terms_dialog(self, page):
-        """Handle consent only when Google's visible, enabled consent button is present."""
-        log.info("🚀 step2 — terms")
-        try:
-            await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
-            await page.keyboard.press("End")
-            await page.wait_for_timeout(500)
-        except Exception:
-            pass
-        for label in ("Agree and continue", "Agree", "Continue", "Next"):
-            try:
-                btn = page.get_by_role("button", name=re.compile(r"^\s*" + re.escape(label) + r"\s*$", re.I)).first
-                if await btn.is_visible(timeout=900) and await btn.is_enabled():
-                    await btn.click(timeout=5000)
-                    log.info(f"✅ Consent action clicked: {label}")
-                    await page.wait_for_timeout(1200)
-                    return True
-            except Exception:
-                continue
+        """Click only a visible, enabled consent button; never force-enable it."""
+        log.info("🚀 step2 — terms/consent")
+        labels = ["I understand", "Agree and continue", "Accept", "Agree", "Continue"]
+        for frame in page.frames:
+            for label in labels:
+                try:
+                    button = frame.get_by_role("button", name=label, exact=True).first
+                    if await button.is_visible(timeout=700) and await button.is_enabled():
+                        await button.click(timeout=3000)
+                        log.info(f"✅ Consent/continue button clicked: {label}")
+                        await page.wait_for_timeout(1500)
+                        return
+                except Exception:
+                    continue
         log.warning("⚠️ Consent button not found/enabled. Manual review may be required.")
-        return False
 
     # ═══════════════════════════════════════
     # STEP 3

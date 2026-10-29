@@ -72,16 +72,31 @@ async def _is_dashboard(page) -> bool:
 
 
 async def _is_blocked(page) -> str:
-    """Return account_deleted only for explicit deletion/closure messages."""
     try:
         return await page.evaluate("""
             () => {
+                const url = window.location.href.toLowerCase();
                 const body = (document.body.innerText || '').toLowerCase();
-                const explicit = [
-                    'account deleted', 'account has been deleted', 'account is closed',
-                    'your account has been deleted', 'تم حذف الحساب', 'تم إغلاق الحساب'
-                ];
-                return explicit.some(t => body.includes(t)) ? 'account_deleted' : null;
+
+                // A sign-in page is not proof that an account was deleted.
+                // Return a distinct state so the bot can report that manual sign-in is needed.
+                if (url.includes('accounts.google.com') && url.includes('/signin')) {
+                    return 'signin_required';
+                }
+                if (body.includes('sign in to continue') || body.includes('use your google account')) {
+                    return 'signin_required';
+                }
+
+                // ✅ كشف الحساب المحذوف
+                if (body.includes('account deleted') || 
+                    body.includes('account has been deleted') || 
+                    body.includes('account is closed') ||
+                    body.includes('تم حذف الحساب') ||
+                    body.includes('تم إغلاق الحساب')) {
+                    return 'account_deleted';
+                }
+
+                return null;
             }
         """)
     except Exception:
@@ -101,7 +116,7 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
         flag = "🇧🇪"
 
     log.info(f"🚀 SSO — project={project_id}")
-    console = CloudConsole(context, sender=sender, user_tag=user_tag)
+    console = CloudConsole(context, sender=None, user_tag=user_tag)
 
     page = await context.new_page()
     try:
@@ -116,12 +131,12 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             await page.goto(sso_url, wait_until="commit", timeout=40000)
 
         await page.wait_for_timeout(1500)
-        await console._shot(page, "📸 الخطوة 1/7: فتح رابط الجلسة")
 
         blocked = await _is_blocked(page)
         if blocked:
             await page.screenshot(path="/tmp/blocked.png")
-            return {"success": False, "error": blocked, "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
+            msg = "⚠️ يلزم تسجيل الدخول/إكمال الموافقة يدويًا في جلسة Google." if blocked == "signin_required" else "❌ Google أظهر أن الحساب محذوف أو مغلق."
+            return {"success": False, "error": blocked, "message": msg, "screenshot": "/tmp/blocked.png"}
 
         # 2
         if sender:
@@ -130,9 +145,8 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             
         try:
             await console.step1_welcome_screen(page)
-        except Exception as e:
-            log.warning(f"step1 welcome failed: {e}")
-        await console._shot(page, "📸 الخطوة 2/7: صفحة Welcome بعد النزول والمتابعة")
+        except Exception: pass
+
         await page.wait_for_timeout(1000)
 
         # 3
@@ -142,9 +156,8 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             
         try:
             await console.step2_terms_dialog(page)
-        except Exception as e:
-            log.warning(f"step2 terms failed: {e}")
-        await console._shot(page, "📸 الخطوة 3/7: فحص صفحة الموافقة")
+        except Exception: pass
+
         await page.wait_for_timeout(1000)
 
         # 4
@@ -153,25 +166,21 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             except: pass
 
         dashboard_ok = False
-        for i in range(60): # انتظر حتى دقيقة لانتقال الصفحة
+        for i in range(15): # قللنا الوقت باش نسرعو
             await page.wait_for_timeout(1000)
             blocked = await _is_blocked(page)
             if blocked:
                 await page.screenshot(path="/tmp/blocked.png")
-                return {"success": False, "error": blocked, "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
+                msg = "⚠️ يلزم تسجيل الدخول/إكمال الموافقة يدويًا في جلسة Google." if blocked == "signin_required" else "❌ Google أظهر أن الحساب محذوف أو مغلق."
+                return {"success": False, "error": blocked, "message": msg, "screenshot": "/tmp/blocked.png"}
 
             if await _is_dashboard(page):
                 dashboard_ok = True
                 break
 
         if not dashboard_ok:
-            shot = "/tmp/blocked.png"
-            try:
-                await page.screenshot(path=shot, timeout=15000, animations="disabled")
-            except Exception as e:
-                log.warning(f"final screenshot failed: {e}")
-                shot = None
-            return {"success": False, "error": "signin_or_consent_pending", "message": "❌ لم نصل إلى Dashboard. قد تحتاج صفحة تسجيل الدخول أو الموافقة إلى تدخل يدوي؛ هذا لا يعني أن الحساب محذوف.", "screenshot": shot}
+            await page.screenshot(path="/tmp/blocked.png")
+            return {"success": False, "error": "consent_or_signin_required", "message": "⚠️ لم يصل البوت إلى Dashboard. أكمل تسجيل الدخول أو الموافقة يدويًا ثم أعد المحاولة.", "screenshot": "/tmp/blocked.png"}
 
         authuser = extract_authuser(page.url)
 
@@ -182,24 +191,18 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             
         try:
             await console.step3_enable_api(page, project_id, authuser)
-        except Exception as e:
-            log.warning(f"step3 API failed: {e}")
-        await console._shot(page, "📸 الخطوة 4/7: صفحة تفعيل Cloud Run API")
+        except Exception: pass
 
         # 6
         if sender:
             try: await sender.edit_text("⏳ جاري التنفيذ... [6/6] إنشاء Cloud Run")
             except: pass
             
-        await console._shot(page, "📸 الخطوة 5/7: قبل إعداد خدمة Cloud Run")
         try:
             await console.step4_create_cloud_run(page, project_id, authuser, image, region=region)
-            await console._shot(page, "📸 الخطوة 6/7: تم إرسال طلب إنشاء الخدمة")
         except Exception as e:
-            shot = "/tmp/blocked.png"
-            try: await page.screenshot(path=shot, timeout=15000, animations="disabled")
-            except Exception: shot = None
-            return {"success": False, "error": "step4_failed", "message": str(e)[:200], "screenshot": shot}
+            await page.screenshot(path="/tmp/blocked.png")
+            return {"success": False, "error": "step4_failed", "message": str(e)[:200], "screenshot": "/tmp/blocked.png"}
 
         await page.wait_for_timeout(500)
 
@@ -208,10 +211,8 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             final_url = await console.step5_get_deployed_url(page)
             domain = extract_domain_from_service_url(final_url)
         except Exception as e:
-            shot = "/tmp/blocked.png"
-            try: await page.screenshot(path=shot, timeout=15000, animations="disabled")
-            except Exception: shot = None
-            return {"success": False, "error": "step5_failed", "message": str(e)[:200], "screenshot": shot}
+            await page.screenshot(path="/tmp/blocked.png")
+            return {"success": False, "error": "step5_failed", "message": str(e)[:200], "screenshot": "/tmp/blocked.png"}
 
     finally:
         try: await page.close()
