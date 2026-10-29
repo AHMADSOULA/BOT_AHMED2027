@@ -1,320 +1,469 @@
 """
 automation/sshs8.py
-- أتمتة موقع sshs8.com
-- ما كيهبطش بزاف، كيقرا الدول من النص كامل
+دخول sshs8.com → إغلاق الإعلانات → SSH WebSocket → اختيار دولة
++ تصوير كل خطوة
 """
 import asyncio
 import random
 import string
+import re
 import os
+from playwright.async_api import expect
 from utils.logger import get_logger
 
 log = get_logger("SSHS8")
-BASE_URL = "https://sshs8.com"
+
+
+def generate_username():
+    return "u" + "".join(random.choices(string.digits, k=10))
 
 
 def generate_password():
-    return "".join(random.choices(string.ascii_letters + string.digits, k=10))
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choices(chars, k=8))
+
+
+# ═══════════════════════════════════════════
+# الدول المعروفة (fallback)
+# ═══════════════════════════════════════════
+
+KNOWN_COUNTRIES = [
+    "بلجيكا 🇧🇪", "أمريكا 🇺🇸", "ألمانيا 🇩🇪", "فرنسا 🇫🇷",
+    "هولندا 🇳🇱", "بريطانيا 🇬🇧", "كندا 🇨🇦", "سويسرا 🇨🇭",
+    "السويد 🇸🇪", "النرويج 🇳🇴", "فنلندا 🇫🇮", "الدنمارك 🇩🇰",
+    "النمسا 🇦🇹", "إيرلندا 🇮🇪", "إيطاليا 🇮🇹", "إسبانيا 🇪🇸",
+    "بولندا 🇵🇱", "البرتغال 🇵🇹", "رومانيا 🇷🇴", "تركيا 🇹🇷",
+    "اليابان 🇯🇵", "كوريا الجنوبية 🇰🇷", "سنغافورة 🇸🇬",
+    "هونغ كونغ 🇭🇰", "أستراليا 🇦🇺", "الهند 🇮🇳",
+    "الإمارات 🇦🇪", "السعودية 🇸🇦",
+]
 
 
 class SSHS8:
-    def __init__(self, context, bot=None, chat_id=None):
+    def __init__(self, context, sender=None, user_tag="@user"):
         self.context = context
+        self.sender = sender
+        self.user_tag = user_tag or "@user"
         self.page = None
-        self.bot = bot
-        self.chat_id = chat_id
-        self.counter = 0
 
-    async def _screenshot(self, name: str):
-        if not self.page or not self.bot or not self.chat_id:
+    async def _shot(self, page, caption: str = ""):
+        """screenshot + send"""
+        if not self.sender:
             return
         try:
-            self.counter += 1
-            path = f"/tmp/shot_{self.counter}_{int(asyncio.get_event_loop().time()*1000)}.png"
-            await self.page.screenshot(path=path, full_page=False, timeout=10000)
+            path = f"/tmp/sshs8_{int(asyncio.get_event_loop().time()*1000)}.png"
+            await page.screenshot(path=path, full_page=False, timeout=10000)
             with open(path, "rb") as f:
                 try:
-                    await self.bot.send_photo(chat_id=self.chat_id, photo=f, caption=f"📸 {name}")
-                except Exception: pass
-            try: os.remove(path)
-            except: pass
-        except Exception: pass
-
-    async def _close_ads(self):
-        try:
-            await self.page.evaluate("""
-                () => {
-                    document.querySelectorAll('iframe').forEach(f => {
-                        if(f.src && (f.src.includes('ads') || f.src.includes('google') || f.src.includes('doubleclick') || f.src.includes('fluid'))) f.remove();
-                    });
-                    document.querySelectorAll('[class*="popup"], [class*="modal"], [class*="overlay"]').forEach(el => {
-                        try { if (window.getComputedStyle(el).zIndex > 100) el.remove(); } catch(e) {}
-                    });
-                }
-            """)
-            await self.page.wait_for_timeout(500)
-        except Exception: pass
-
-    async def open_home(self) -> bool:
-        self.page = await self.context.new_page()
-        try:
-            await self.page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
-            await self.page.wait_for_timeout(4000)
-            await self._close_ads()
-            await self._screenshot("1. Home Page")
-            return True
-        except Exception: return False
-
-    async def open_protocol(self, proto_name: str) -> list:
-        try:
-            await self._close_ads()
-            await self.page.wait_for_timeout(1000)
-
-            clicked = False
-            for sel in [f'a:has-text("{proto_name}")', f'span:has-text("{proto_name}")', f'li:has-text("{proto_name}")']:
-                try:
-                    el = self.page.locator(sel).first
-                    if await el.count() > 0:
-                        await el.click(timeout=5000, force=True)
-                        clicked = True
-                        await self.page.wait_for_timeout(2000)
-                        break
-                except Exception: continue
-
-            if not clicked:
-                await self.page.evaluate(r"""
-                    (name) => {
-                        const all = document.querySelectorAll('a, span, li');
-                        for (const el of all) {
-                            const t = (el.innerText || el.textContent || '').trim();
-                            if (t === name) { el.click(); return; }
-                        }
-                    }
-                """, proto_name)
-                await self.page.wait_for_timeout(2000)
-
+                    await self.sender.reply_photo(photo=f, caption=f"📸 {caption}"[:1000])
+                except Exception:
+                    pass
             try:
-                arrow_clicked = await self.page.evaluate(r"""
-                    (name) => {
-                        const all = document.querySelectorAll('a, li, span');
-                        for (const el of all) {
-                            const t = (el.innerText || el.textContent || '').trim();
-                            if (t.includes(name) && t.length < name.length + 30) {
-                                const arrow = el.querySelector('.dropdown-toggle, [class*="arrow"], [class*="caret"], svg, i');
-                                if (arrow) { arrow.click(); return true; }
-                                const parent = el.closest('li, div');
-                                if (parent) {
-                                    const arrow2 = parent.querySelector('.dropdown-toggle, [class*="arrow"], [class*="caret"], svg');
-                                    if (arrow2) { arrow2.click(); return true; }
-                                }
+                os.remove(path)
+            except Exception:
+                pass
+        except Exception as e:
+            log.warning(f"⚠️ _shot: {e}")
+
+    # ═══════════════════════════════════════
+    # Flag
+    # ═══════════════════════════════════════
+
+    def _get_flag(self, name: str) -> str:
+        name_lower = name.lower()
+        flags = {
+            "belgium": "🇧🇪", "united states": "🇺🇸", "usa": "🇺🇸", "america": "🇺🇸",
+            "germany": "🇩🇪", "france": "🇫🇷", "netherlands": "🇳🇱", "holland": "🇳🇱",
+            "united kingdom": "🇬🇧", "uk": "🇬🇧", "england": "🇬🇧",
+            "canada": "🇨🇦", "switzerland": "🇨🇭", "sweden": "🇸🇪", "norway": "🇳🇴",
+            "finland": "🇫🇮", "denmark": "🇩🇰", "austria": "🇦🇹", "ireland": "🇮🇪",
+            "italy": "🇮🇹", "spain": "🇪🇸", "poland": "🇵🇱", "portugal": "🇵🇹",
+            "romania": "🇷🇴", "turkey": "🇹🇷", "japan": "🇯🇵",
+            "south korea": "🇰🇷", "korea": "🇰🇷", "singapore": "🇸🇬",
+            "hong kong": "🇭🇰", "australia": "🇦🇺", "india": "🇮🇳",
+            "uae": "🇦🇪", "emirates": "🇦🇪", "saudi": "🇸🇦",
+            "brazil": "🇧🇷", "mexico": "🇲🇽", "russia": "🇷🇺", "china": "🇨🇳",
+        }
+        for k, v in flags.items():
+            if k in name_lower:
+                return v
+        return ""
+
+    # ═══════════════════════════════════════
+    # إغلاق الإعلانات
+    # ═══════════════════════════════════════
+
+    async def _close_ads(self, page):
+        log.info("🚫 نحاولو نغلقو الإعلانات...")
+        closed_count = 0
+        for _ in range(3):
+            try:
+                clicked = await page.evaluate("""
+                    () => {
+                        let closed = 0;
+                        const close_texts = ['close', '×', '✕', 'x', 'إغلاق', 'تخطي', 'skip'];
+                        for (const el of document.querySelectorAll('button, a, span, div, [role="button"]')) {
+                            if (el.offsetParent === null) continue;
+                            const t = (el.innerText || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                            for (const kw of close_texts) {
+                                if (t === kw) { try { el.click(); closed++; break; } catch (e) {} }
                             }
                         }
-                        return false;
+                        for (const el of document.querySelectorAll('[class*="close" i], [class*="popup" i], [class*="ad-" i]')) {
+                            if (el.offsetParent === null) continue;
+                            try { el.click(); closed++; } catch (e) {}
+                        }
+                        return closed;
                     }
-                """, proto_name)
-                if arrow_clicked:
-                    await self.page.wait_for_timeout(2000)
-            except Exception: pass
+                """)
+                if clicked:
+                    closed_count += clicked
+                    await page.wait_for_timeout(500)
+            except Exception:
+                pass
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(500)
+        except Exception:
+            pass
+        return closed_count
 
-            await self._screenshot(f"2. Protocol: {proto_name}")
+    # ═══════════════════════════════════════
+    # 1. فتح الموقع
+    # ═══════════════════════════════════════
 
-            continents = await self.page.evaluate(r"""
+    async def open_ssh_websocket(self) -> list:
+        log.info("🌐 فتح sshs8.com")
+        self.page = await self.context.new_page()
+        page = self.page
+
+        try:
+            await page.goto("https://sshs8.com/", wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(4000)
+            await self._shot(page, "1️⃣ sshs8.com")
+
+            await self._close_ads(page)
+            await page.wait_for_timeout(1500)
+            await self._shot(page, "2️⃣ بعد إغلاق الإعلانات")
+
+            # ✅ نروحو SSH WebSocket
+            ssh_url = None
+            try:
+                ssh_url = await page.evaluate("""
+                    () => {
+                        for (const a of document.querySelectorAll('a')) {
+                            const href = a.href || '';
+                            const t = (a.innerText || '').trim().toLowerCase();
+                            if (href && (href.includes('ssh-websocket') ||
+                                         href.includes('sshwebsocket') ||
+                                         href.includes('websocket') ||
+                                         t === 'ssh websocket')) {
+                                return href;
+                            }
+                        }
+                        return null;
+                    }
+                """)
+            except Exception:
+                pass
+
+            if ssh_url:
+                await page.goto(ssh_url, wait_until="domcontentloaded", timeout=60000)
+                await page.wait_for_timeout(4000)
+                await self._close_ads(page)
+            else:
+                for sel in [
+                    'a[href*="ssh-websocket"]',
+                    'a[href*="sshwebsocket"]',
+                    'a[href*="websocket"]',
+                    'a:has-text("SSH WebSocket")',
+                ]:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.count() > 0 and await el.is_visible():
+                            await el.click()
+                            break
+                    except Exception:
+                        continue
+                await page.wait_for_timeout(4000)
+                await self._close_ads(page)
+
+            await page.wait_for_timeout(2000)
+            await self._shot(page, "3️⃣ صفحة SSH WebSocket")
+
+            countries = await self._get_countries(page)
+            log.info(f"🌍 الدول: {len(countries)}")
+
+            if countries and len(countries) > 3:
+                final = []
+                for c in countries:
+                    name = c.strip()
+                    flag = self._get_flag(name)
+                    final.append(f"{name} {flag}" if flag else name)
+                return final
+
+            return KNOWN_COUNTRIES
+
+        except Exception as e:
+            log.error(f"❌ open_ssh_websocket: {e}", exc_info=True)
+            return KNOWN_COUNTRIES
+
+    # ═══════════════════════════════════════
+    # 2. جلب الدول
+    # ═══════════════════════════════════════
+
+    async def _get_countries(self, page) -> list:
+        try:
+            countries = await page.evaluate("""
                 () => {
                     const out = [];
-                    const keywords = ["أوروبا", "آسيا", "أمريكا الشمالية", "أمريكا الجنوبية", "أفريقيا", "Europe", "Asia", "North America", "South America", "Africa"];
-                    const all = document.querySelectorAll('a, li, span');
-                    for (const el of all) {
-                        const t = (el.innerText || el.textContent || '').trim();
-                        if (!t || t.length > 60) continue;
-                        for (const kw of keywords) {
-                            if (t.includes(kw)) {
-                                if (!out.find(x => x.name === kw)) {
-                                    out.push({ name: kw, full_text: t, href: el.href || '' });
-                                }
-                                break;
+                    for (const sel of document.querySelectorAll('select')) {
+                        for (const opt of sel.querySelectorAll('option')) {
+                            const t = (opt.innerText || opt.textContent || '').trim();
+                            if (t && t.length > 1 && t.length < 80 &&
+                                !t.toLowerCase().includes('select') &&
+                                !t.toLowerCase().includes('choose') &&
+                                !t.toLowerCase().includes('---') &&
+                                !t.toLowerCase().includes('option')) {
+                                out.push(t);
                             }
                         }
                     }
-                    return out;
+                    if (out.length === 0) {
+                        for (const el of document.querySelectorAll('[role="listbox"], [class*="dropdown" i], [class*="select" i]')) {
+                            for (const opt of el.querySelectorAll('[role="option"], li, a, button')) {
+                                const t = (opt.innerText || '').trim();
+                                if (t && t.length > 1 && t.length < 80 &&
+                                    !t.toLowerCase().includes('select') &&
+                                    !t.toLowerCase().includes('choose') &&
+                                    !t.toLowerCase().includes('back') &&
+                                    !t.toLowerCase().includes('close')) {
+                                    out.push(t);
+                                }
+                            }
+                        }
+                    }
+                    return [...new Set(out)];
                 }
             """)
-            return continents
+            return countries or []
         except Exception as e:
-            log.error(f"❌ open_protocol: {e}")
+            log.error(f"❌ _get_countries: {e}")
             return []
 
-    async def open_continent(self, cont_name: str) -> list:
-        """يفتح القارة، ما كيهبطش، كيقرا الدول من النص"""
+    # ═══════════════════════════════════════
+    # 3. إنشاء حساب
+    # ═══════════════════════════════════════
+
+    async def create_account(self, country: str) -> dict:
+        page = self.page
+        if not page:
+            return {"success": False, "error": "no_page"}
+
+        # نحيّدو الـ flag
+        country_name = country.split(" ")[0]
+
+        username = generate_username()
+        password = generate_password()
+
+        log.info(f"🌍 {country_name}")
+        log.info(f"👤 User: {username}")
+        log.info(f"🔑 Pass: {password}")
+
+        result = {
+            "success": False,
+            "username": username,
+            "password": password,
+            "country": country,
+            "host": None,
+        }
+
         try:
-            await self._close_ads()
-            
-            for sel in [f'a:has-text("{cont_name}")', f'text="{cont_name}"']:
-                try:
-                    el = self.page.locator(sel).first
-                    if await el.count() > 0:
-                        await el.click(timeout=5000, force=True)
-                        await self.page.wait_for_timeout(4000)
-                        break
-                except Exception: continue
+            await self._close_ads(page)
+            await page.wait_for_timeout(1000)
+            await self._shot(page, "4️⃣ قبل اختيار الدولة")
 
-            await self._close_ads()
-            await self.page.wait_for_timeout(1000)
-
-            for sel in ['button:has-text("Accept")', 'button:has-text("Agree")', 'button:has-text("Got it")']:
-                try:
-                    el = self.page.locator(sel).first
-                    if await el.count() > 0:
-                        await el.click(timeout=2000, force=True)
-                        break
-                except Exception: continue
-
-            # ✅ نصورو (بلا Scroll باش تبان البطاقات اللي فوق)
-            await self._screenshot(f"3. Continent: {cont_name}")
-
-            # ✅ نستخرجو الدول من النص الكامل
-            countries = await self.page.evaluate(r"""
-                () => {
-                    const out = [];
-                    const bodyText = document.body.innerText || '';
-                    const lines = bodyText.split('\n');
-                    
-                    for (let i = 0; i < lines.length; i++) {
-                        const line = lines[i].trim();
-                        if (!line.startsWith('Location:')) continue;
-                        
-                        const countryName = line.replace('Location:', '').trim();
-                        if (!countryName || countryName.length > 60) continue;
-                        
-                        let emoji = "🌍";
-                        for (let j = Math.max(0, i - 8); j < i; j++) {
-                            const emojiMatch = lines[j].match(/[\u{1F1E6}-\u{1F1FF}]{2}/u);
-                            if (emojiMatch) { emoji = emojiMatch[0]; break; }
-                        }
-                        
-                        if (!out.find(x => x.name === countryName)) {
-                            out.push({ name: countryName, emoji: emoji });
-                        }
-                    }
-                    return out;
-                }
+            # ✅ 1. اختيار الدولة
+            clicked_country = await page.evaluate(f"""
+                () => {{
+                    const target = {country_name!r}.toLowerCase();
+                    for (const sel of document.querySelectorAll('select')) {{
+                        for (const opt of sel.querySelectorAll('option')) {{
+                            const t = (opt.innerText || opt.textContent || '').trim().toLowerCase();
+                            if (t === target || t.includes(target)) {{
+                                sel.value = opt.value;
+                                sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                return t;
+                            }}
+                        }}
+                    }}
+                    for (const el of document.querySelectorAll('[role="option"], li, a, button')) {{
+                        if (el.offsetParent === null) continue;
+                        const t = (el.innerText || '').trim().toLowerCase();
+                        if (t === target || t.includes(target)) {{
+                            try {{ el.click(); return t; }} catch (e) {{}}
+                        }}
+                    }}
+                    return null;
+                }}
             """)
 
-            if not countries:
-                countries = await self.page.evaluate(r"""
+            if not clicked_country:
+                try:
+                    await page.select_option('select', label=country_name)
+                except Exception:
+                    pass
+
+            await page.wait_for_timeout(2000)
+            await self._shot(page, f"5️⃣ بعد اختيار {country_name}")
+
+            # ✅ 2. username
+            for sel in [
+                'input[name*="user" i]', 'input[id*="user" i]',
+                'input[placeholder*="user" i]', 'input[type="text"]',
+            ]:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0 and await el.is_visible():
+                        await el.click()
+                        await el.fill("")
+                        await page.wait_for_timeout(200)
+                        await el.fill(username)
+                        break
+                except Exception:
+                    continue
+
+            await page.wait_for_timeout(800)
+
+            # ✅ 3. password
+            for sel in [
+                'input[name*="pass" i]', 'input[id*="pass" i]',
+                'input[placeholder*="pass" i]', 'input[type="password"]',
+            ]:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0 and await el.is_visible():
+                        await el.click()
+                        await el.fill("")
+                        await page.wait_for_timeout(200)
+                        await el.fill(password)
+                        break
+                except Exception:
+                    continue
+
+            await page.wait_for_timeout(1000)
+            await self._shot(page, "6️⃣ بعد تعبئة الحقول")
+
+            # ✅ 4. Create
+            submitted = False
+            for sel in [
+                'button:has-text("Create")', 'button:has-text("Submit")',
+                'button:has-text("Create Account")', 'button:has-text("Generate")',
+                'input[type="submit"]',
+            ]:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0 and await el.is_visible():
+                        await el.click()
+                        submitted = True
+                        break
+                except Exception:
+                    continue
+
+            if not submitted:
+                await page.evaluate("""
                     () => {
-                        const out = [];
-                        document.querySelectorAll('h2, h3, h4, strong, span, p').forEach(el => {
-                            const t = (el.innerText || '').trim();
-                            if (t.startsWith('Location:')) {
-                                const name = t.replace('Location:', '').trim();
-                                if (name && name.length < 60 && !out.find(x => x.name === name)) {
-                                    out.push({ name: name, emoji: "🌍" });
-                                }
+                        for (const el of document.querySelectorAll('button, input[type="submit"], [role="button"]')) {
+                            if (el.offsetParent === null || el.disabled) continue;
+                            const t = (el.innerText || el.value || '').trim().toLowerCase();
+                            if (t.includes('create') || t.includes('submit') || t.includes('generate')) {
+                                try { el.click(); return; } catch (e) {}
                             }
-                        });
-                        return out;
+                        }
                     }
                 """)
 
-            log.info(f"🌍 Countries: {[c['name'] for c in countries]}")
-            return countries
+            await page.wait_for_timeout(5000)
+            await self._close_ads(page)
+            await self._shot(page, "7️⃣ بعد Create")
 
-        except Exception as e:
-            log.error(f"❌ open_continent: {e}")
-            return []
+            # ✅ 5. host — نجربو كل الطرق
+            host = await page.evaluate("""
+                () => {
+                    const body = document.body.innerText || '';
 
-    async def open_country(self, country_name: str) -> list:
-        try:
-            await self._close_ads()
-            
-            clicked = await self.page.evaluate(r"""
-                (name) => {
-                    const divs = document.querySelectorAll('div');
-                    for (const div of divs) {
-                        const txt = div.innerText || '';
-                        if (txt.includes('Location: ' + name)) {
-                            const btn = Array.from(div.querySelectorAll('button, a')).find(b => b.innerText.includes('Server list'));
-                            if (btn) { btn.click(); return true; }
+                    // 1. IP (IPv4)
+                    const ip = body.match(/([0-9]{1,3}\\.){3}[0-9]{1,3}/);
+                    if (ip) return ip[0];
+
+                    // 2. hostname (with dot)
+                    const hostname = body.match(/([a-zA-Z0-9][a-zA-Z0-9\\.\\-]*\\.[a-z]{2,})/);
+                    if (hostname) return hostname[0];
+
+                    // 3. أي رقم طويل
+                    const digits = body.match(/\\b\\d{6,}\\b/);
+                    if (digits) return digits[0];
+
+                    return null;
+                }
+            """)
+
+            # ✅ إذا ما لقيناش، نجربو نلقاو input فيه host
+            if not host:
+                try:
+                    host = await page.evaluate("""
+                        () => {
+                            for (const el of document.querySelectorAll('input, code, pre, span, div')) {
+                                const v = el.value || el.innerText || '';
+                                const m = v.match(/([0-9]{1,3}\\.){3}[0-9]{1,3}/);
+                                if (m) return m[0];
+                            }
+                            return null;
+                        }
+                    """)
+                except Exception:
+                    pass
+
+            result["host"] = host
+            log.info(f"🖥️ Host: {host}")
+
+            # ✅ 6. username/password من الصفحة
+            new_user = await page.evaluate("""
+                () => {
+                    for (const el of document.querySelectorAll('input, code, pre, span')) {
+                        const v = el.value || el.innerText || '';
+                        if (/^u[0-9]{6,}$/.test(v.trim())) return v.trim();
+                    }
+                    return null;
+                }
+            """)
+            new_pass = await page.evaluate("""
+                () => {
+                    for (const el of document.querySelectorAll('input, code, pre, span')) {
+                        const v = el.value || el.innerText || '';
+                        if (/^[a-zA-Z0-9]{6,12}$/.test(v.trim()) && v.trim() !== '') {
+                            return v.trim();
                         }
                     }
-                    return false;
-                }
-            """, country_name)
-
-            if not clicked:
-                el = self.page.locator('button:has-text("Server list")').first
-                if await el.count() > 0:
-                    await el.click(timeout=5000, force=True)
-                    clicked = True
-
-            if not clicked: return []
-
-            await self.page.wait_for_timeout(4000)
-            await self._close_ads()
-            await self._screenshot(f"4. Servers: {country_name}")
-
-            servers = await self.page.evaluate(r"""
-                () => {
-                    const out = [];
-                    document.querySelectorAll('div').forEach(div => {
-                        const txt = div.innerText || '';
-                        const m = txt.match(/E\d{2,3}/);
-                        if (!m) return;
-                        const btn = Array.from(div.querySelectorAll('a, button')).find(b => b.innerText.includes('إنشاء') || b.innerText.includes('Create'));
-                        if (btn && !out.find(x => x.id === m[0])) {
-                            out.push({ id: m[0], href: btn.href || '' });
-                        }
-                    });
-                    return out;
+                    return null;
                 }
             """)
-            return servers
+
+            if new_user:
+                result["username"] = new_user
+            if new_pass:
+                result["password"] = new_pass
+
+            result["success"] = True
+
         except Exception as e:
-            log.error(f"❌ open_country: {e}")
-            return []
+            log.error(f"❌ create_account: {e}", exc_info=True)
+            await self._shot(page, f"❌ خطأ: {str(e)[:100]}")
 
-    async def create_account(self, href: str) -> dict:
-        password = generate_password()
-        try:
-            await self.page.goto(href, wait_until="domcontentloaded", timeout=60000)
-            await self.page.wait_for_timeout(3000)
-            await self._close_ads()
-            await self._screenshot("5. Server Page")
-
-            for sel in ['input[name*="user" i]', 'input[type="password"]']:
-                el = self.page.locator(sel).first
-                if await el.count() > 0:
-                    await el.fill(password if 'pass' in sel else f"u{random.randint(1000,9999)}")
-
-            for sel in ['button:has-text("إنشاء حساب")', 'button:has-text("Create")']:
-                try:
-                    el = self.page.locator(sel).first
-                    if await el.count() > 0:
-                        await el.click(timeout=5000, force=True)
-                        break
-                except Exception: continue
-
-            await self.page.wait_for_timeout(5000)
-            await self._screenshot("6. Account Created")
-
-            data = await self.page.evaluate(r"""
-                () => {
-                    const out = { ip: null, user: null, link: null };
-                    document.querySelectorAll('input, textarea').forEach(inp => {
-                        const v = (inp.value || '').trim();
-                        if (/^\d+\.\d+\.\d+\.\d+$/.test(v)) out.ip = v;
-                        else if (v.startsWith('vmess://') || v.startsWith('vless://') || v.startsWith('trojan://')) out.link = v;
-                    });
-                    return out;
-                }
-            """)
-            data["password"] = password
-            data["success"] = True
-            return data
-        except Exception as e:
-            return {"success": False, "message": str(e)}
+        return result
 
     async def close(self):
-        if self.page:
-            try: await self.page.close()
-            except: pass
+        try:
+            await self.page.close()
+        except Exception:
+            pass

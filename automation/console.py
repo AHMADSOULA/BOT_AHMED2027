@@ -40,62 +40,111 @@ class CloudConsole:
     # STEP 1
     # ═══════════════════════════════════════
 
-    async def _click_visible_action(self, page, labels, step_name):
-        """Click a real, visible and enabled Google consent/continue control.
-
-        Google changes button markup and sometimes nests the consent UI in a
-        frame, so inspect all current frames and several accessible/text selectors.
-        Never force-enable a consent control.
-        """
-        selectors = []
-        for label in labels:
-            selectors.extend([
-                ("role", label),
-                ("text", label),
-            ])
-
-        # Re-read frames on each attempt because Google may add a frame late.
-        for _ in range(4):
-            for frame in list(page.frames):
-                for kind, label in selectors:
-                    try:
-                        if kind == "role":
-                            loc = frame.get_by_role("button", name=label, exact=False).first
-                        else:
-                            loc = frame.get_by_text(label, exact=True).first
-                        if await loc.is_visible(timeout=500):
-                            try:
-                                enabled = await loc.is_enabled()
-                            except Exception:
-                                enabled = True
-                            if enabled:
-                                await loc.click(timeout=2500)
-                                log.info(f"✅ {step_name}: clicked visible control '{label}'")
-                                await page.wait_for_timeout(1200)
-                                return True
-                    except Exception:
-                        continue
-            await page.wait_for_timeout(700)
-        return False
-
     async def step1_welcome_screen(self, page):
-        """Handle the Google Welcome screen if a normal continuation control exists."""
-        log.info("🚀 step1 — Welcome")
+        log.info("🚀 step1")
+
         try:
-            await page.wait_for_load_state("domcontentloaded", timeout=12000)
+            await page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
             pass
-        await page.wait_for_timeout(1200)
-        labels = ["I understand", "Got it", "Continue", "Next"]
-        if not await self._click_visible_action(page, labels, "Welcome"):
-            log.info("ℹ️ No visible enabled Welcome action; leaving page for review")
+        await page.wait_for_timeout(1500)
+
+        try:
+            await page.keyboard.press("Enter")
+        except Exception:
+            pass
+
+        try:
+            button = page.locator("text='I understand'")
+            if await button.is_visible(timeout=3000):
+                await button.click()
+                log.info("✅ I understand")
+        except Exception:
+            pass
+
+        try:
+            await page.evaluate("""
+                () => {
+                    const kws = ['i understand', 'agree and continue', 'accept'];
+                    for (const el of document.querySelectorAll('button, a, [role="button"], input[type="submit"]')) {
+                        if (el.offsetParent === null || el.disabled) continue;
+                        const t = (el.innerText || el.value || '').trim().toLowerCase();
+                        for (const kw of kws) {
+                            if (t.includes(kw)) {
+                                try { el.click(); return; } catch (e) {}
+                            }
+                        }
+                    }
+                }
+            """)
+        except Exception:
+            pass
+
+    # ═══════════════════════════════════════
+    # STEP 2
+    # ═══════════════════════════════════════
 
     async def step2_terms_dialog(self, page):
-        """Handle visible consent buttons; if consent is unavailable, report it clearly."""
-        log.info("🚀 step2 — terms/consent")
-        labels = ["I understand", "Agree and continue", "Accept", "Agree", "Continue"]
-        if not await self._click_visible_action(page, labels, "Terms"):
-            log.warning("⚠️ Consent action not found/enabled. Manual review may be required.")
+        log.info("🚀 step2")
+
+        agree_btn = page.get_by_role("button", name="Agree and continue")
+
+        try:
+            await agree_btn.wait_for(state="visible", timeout=8000)
+            log.info("✅ Agree ظهر")
+
+            checkboxes = page.get_by_role("checkbox")
+            try:
+                cnt = await checkboxes.count()
+                if cnt >= 2:
+                    await checkboxes.nth(0).click()
+                    await asyncio.sleep(0.5)
+                    await checkboxes.nth(1).click()
+                elif cnt == 1:
+                    await checkboxes.nth(0).click()
+            except Exception:
+                pass
+
+            try:
+                await agree_btn.click()
+            except Exception:
+                await page.evaluate("""
+                    () => {
+                        for (const el of document.querySelectorAll('button, [role="button"]')) {
+                            const t = (el.innerText || '').trim().toLowerCase();
+                            if (t.includes('agree and continue')) {
+                                try { el.disabled = false; el.click(); } catch (e) {}
+                            }
+                        }
+                    }
+                """)
+
+            await page.wait_for_timeout(1500)
+        except Exception as e:
+            log.warning(f"⚠️ Dialog: {e}")
+            try:
+                await page.evaluate("""
+                    () => {
+                        for (const el of document.querySelectorAll('mat-checkbox, [role="checkbox"], input[type="checkbox"]')) {
+                            if (el.offsetParent === null) continue;
+                            try { el.click(); } catch (e) {}
+                        }
+                    }
+                """)
+                await asyncio.sleep(1)
+                await page.evaluate("""
+                    () => {
+                        for (const el of document.querySelectorAll('button, [role="button"]')) {
+                            const t = (el.innerText || '').trim().toLowerCase();
+                            if (t.includes('agree and continue')) {
+                                try { el.disabled = false; el.click(); } catch (e) {}
+                            }
+                        }
+                    }
+                """)
+                await asyncio.sleep(1)
+            except Exception:
+                pass
 
     # ═══════════════════════════════════════
     # STEP 3
