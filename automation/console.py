@@ -85,66 +85,81 @@ class CloudConsole:
     # ═══════════════════════════════════════
 
     async def step2_terms_dialog(self, page):
+        """
+        Google Cloud UI can vary by session. Treat the consent dialog as optional:
+        click it only when it is actually visible; never force-enable a disabled
+        button. Save a short diagnostic when the expected button is absent.
+        """
         log.info("🚀 step2")
 
-        agree_btn = page.get_by_role("button", name="Agree and continue")
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+
+        # Search common button labels without assuming the dialog always appears.
+        button = None
+        labels = [
+            "Agree and continue",
+            "Agree",
+            "Accept",
+            "Continue",
+            "I agree",
+        ]
+        for label in labels:
+            try:
+                candidate = page.get_by_role("button", name=re.compile(
+                    r"^\\s*" + re.escape(label) + r"\\s*$", re.I
+                )).first
+                if await candidate.is_visible(timeout=700):
+                    button = candidate
+                    log.info("✅ Consent button visible: %s", label)
+                    break
+            except Exception:
+                continue
+
+        if button is None:
+            # The consent page may not be part of this session's flow.
+            try:
+                title = (await page.title())[:120]
+                url = page.url[:250]
+                body = await page.locator("body").inner_text(timeout=2000)
+                body = " ".join(body.split())[:350]
+                log.info(
+                    "ℹ️ No consent button visible; continuing. title=%r url=%r body=%r",
+                    title, url, body
+                )
+            except Exception:
+                log.info("ℹ️ No consent dialog detected; continuing.")
+            return False
+
+        # If visible consent checkboxes are present, select them normally.
+        # Do not click hidden controls or bypass disabled-state checks.
+        try:
+            checkboxes = page.get_by_role("checkbox")
+            count = await checkboxes.count()
+            for idx in range(min(count, 2)):
+                item = checkboxes.nth(idx)
+                try:
+                    if await item.is_visible() and not await item.is_checked():
+                        await item.click(timeout=1500)
+                        await page.wait_for_timeout(250)
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
         try:
-            await agree_btn.wait_for(state="visible", timeout=8000)
-            log.info("✅ Agree ظهر")
-
-            checkboxes = page.get_by_role("checkbox")
-            try:
-                cnt = await checkboxes.count()
-                if cnt >= 2:
-                    await checkboxes.nth(0).click()
-                    await asyncio.sleep(0.5)
-                    await checkboxes.nth(1).click()
-                elif cnt == 1:
-                    await checkboxes.nth(0).click()
-            except Exception:
-                pass
-
-            try:
-                await agree_btn.click()
-            except Exception:
-                await page.evaluate("""
-                    () => {
-                        for (const el of document.querySelectorAll('button, [role="button"]')) {
-                            const t = (el.innerText || '').trim().toLowerCase();
-                            if (t.includes('agree and continue')) {
-                                try { el.disabled = false; el.click(); } catch (e) {}
-                            }
-                        }
-                    }
-                """)
-
-            await page.wait_for_timeout(1500)
-        except Exception as e:
-            log.warning(f"⚠️ Dialog: {e}")
-            try:
-                await page.evaluate("""
-                    () => {
-                        for (const el of document.querySelectorAll('mat-checkbox, [role="checkbox"], input[type="checkbox"]')) {
-                            if (el.offsetParent === null) continue;
-                            try { el.click(); } catch (e) {}
-                        }
-                    }
-                """)
-                await asyncio.sleep(1)
-                await page.evaluate("""
-                    () => {
-                        for (const el of document.querySelectorAll('button, [role="button"]')) {
-                            const t = (el.innerText || '').trim().toLowerCase();
-                            if (t.includes('agree and continue')) {
-                                try { el.disabled = false; el.click(); } catch (e) {}
-                            }
-                        }
-                    }
-                """)
-                await asyncio.sleep(1)
-            except Exception:
-                pass
+            if await button.is_enabled():
+                await button.click(timeout=5000)
+                await page.wait_for_timeout(1200)
+                log.info("✅ Consent accepted")
+                return True
+            log.warning("⚠️ Consent button is disabled; leaving page unchanged.")
+            return False
+        except Exception as exc:
+            log.warning("⚠️ Could not click consent button: %s", str(exc)[:180])
+            return False
 
     # ═══════════════════════════════════════
     # STEP 3
