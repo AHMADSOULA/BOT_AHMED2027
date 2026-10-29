@@ -1,32 +1,29 @@
+
 import os
 from dotenv import load_dotenv
 
+# تحميل المتغيرات من ملف .env إن وُجد
 load_dotenv()
 
 
 class Config:
-    # === Telegram ===
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    # توكن بوت Telegram
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-    # === Cloud Run ===
-    DEFAULT_IMAGE = os.getenv("DEFAULT_IMAGE", "docker.io/ajndjd2/ahmed-vip1")
+    # رقم حساب المدير
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "7119011124").strip())
 
-    # === Browser ===
-    HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
-    CHROME_PROFILE_DIR = os.getenv("CHROME_PROFILE_DIR", "/tmp/chrome_profile")
-    PAGE_TIMEOUT = int(os.getenv("PAGE_TIMEOUT", "60")) * 1000
-    NAV_TIMEOUT = int(os.getenv("NAV_TIMEOUT", "120")) * 1000
-
-    USER_AGENT = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    # تشغيل المتصفح بدون واجهة رسومية
+    HEADLESS = os.getenv("HEADLESS", "true").strip().lower() in (
+        "true", "1", "yes", "on"
     )
 
-    # === Database ===
-    DB_PATH = os.getenv("DB_PATH", "/tmp/bot.db")
+    # صورة Docker الافتراضية للنشر على Cloud Run
+    DEFAULT_IMAGE = os.getenv(
+        "DEFAULT_IMAGE",
+        "docker.io/ajndjd2/ahmed-vip1"
+    ).strip()
 
-    # === Logs ===
-    LOG_DIR = os.getenv("LOG_DIR", "/tmp/logs")
 
-
+# إنشاء كائن الإعدادات الذي يستعمله المشروع
 config = Config()
