@@ -1,4 +1,3 @@
-
 import os
 from dotenv import load_dotenv
 
@@ -6,27 +5,28 @@ load_dotenv()
 
 
 class Config:
-    BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+    # === Telegram ===
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "7119011124").strip())
+    # === Cloud Run ===
+    DEFAULT_IMAGE = os.getenv("DEFAULT_IMAGE", "docker.io/ajndjd2/ahmed-vip1")
 
-    HEADLESS = os.getenv("HEADLESS", "true").strip().lower() in (
-        "true", "1", "yes", "on"
+    # === Browser ===
+    HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
+    CHROME_PROFILE_DIR = os.getenv("CHROME_PROFILE_DIR", "/tmp/chrome_profile")
+    PAGE_TIMEOUT = int(os.getenv("PAGE_TIMEOUT", "60")) * 1000
+    NAV_TIMEOUT = int(os.getenv("NAV_TIMEOUT", "120")) * 1000
+
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     )
 
-    DEFAULT_IMAGE = os.getenv(
-        "DEFAULT_IMAGE",
-        "docker.io/ajndjd2/ahmed-vip1"
-    ).strip()
+    # === Database ===
+    DB_PATH = os.getenv("DB_PATH", "/tmp/bot.db")
 
-    DB_PATH = os.getenv("DB_PATH", "/app/data/bot.db").strip()
-
-    # مجلد ملفات السجلات
-    LOG_DIR = os.getenv("LOG_DIR", "/app/logs").strip()
+    # === Logs ===
+    LOG_DIR = os.getenv("LOG_DIR", "/tmp/logs")
 
 
 config = Config()
-
-# إنشاء المجلدات عند بدء تحميل الإعدادات
-os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
-os.makedirs(config.LOG_DIR, exist_ok=True)
