@@ -1,6 +1,6 @@
 """
 automation/console.py
-كل خطوات Google Cloud Console — بلا تصوير عادي
+كل خطوات Google Cloud Console — كل طرق GC.py + خفيف
 """
 import asyncio
 from playwright.async_api import expect
@@ -16,28 +16,27 @@ class CloudConsole:
         self.user_tag = user_tag or "@user"
 
     async def _shot(self, page, caption: str = ""):
-        """screenshot + send (غير عند الفشل)"""
+        """screenshot + send — للفشل فقط"""
         if not self.sender:
             return
         try:
-            path = f"/tmp/shot_{int(asyncio.get_event_loop().time()*1000)}.png"
+            path = f"/tmp/err_{int(asyncio.get_event_loop().time()*1000)}.png"
             await page.screenshot(path=path, full_page=False, timeout=8000)
             with open(path, "rb") as f:
                 try:
-                    await self.sender.reply_photo(photo=f, caption=caption[:1000])
-                    log.info(f"📸 {caption}")
-                except Exception as e:
-                    log.warning(f"⚠️ reply_photo: {e}")
+                    await self.sender.reply_photo(photo=f, caption=f"❌ {caption}"[:1000])
+                except Exception:
+                    pass
             import os
             try:
                 os.remove(path)
             except Exception:
                 pass
-        except Exception as e:
-            log.warning(f"⚠️ _shot: {e}")
+        except Exception:
+            pass
 
     # ═══════════════════════════════════════
-    # STEP 1
+    # STEP 1 — كيما GC.py
     # ═══════════════════════════════════════
 
     async def step1_welcome_screen(self, page):
@@ -81,7 +80,7 @@ class CloudConsole:
             pass
 
     # ═══════════════════════════════════════
-    # STEP 2
+    # STEP 2 — كيما GC.py
     # ═══════════════════════════════════════
 
     async def step2_terms_dialog(self, page):
@@ -147,7 +146,7 @@ class CloudConsole:
                 pass
 
     # ═══════════════════════════════════════
-    # STEP 3
+    # STEP 3 — كيما GC.py
     # ═══════════════════════════════════════
 
     async def step3_enable_api(self, page, project_id, authuser):
@@ -185,19 +184,20 @@ class CloudConsole:
             log.warning(f"⚠️ step3: {e}")
 
     # ═══════════════════════════════════════
-    # STEP 4 — مع region
+    # STEP 4 — كيما GC.py
     # ═══════════════════════════════════════
 
-    async def step4_create_cloud_run(self, page, project_id, authuser, image, region="us-central1"):
+    async def step4_create_cloud_run(self, page, project_id, authuser, image):
         run_url = (
             f"https://console.cloud.google.com/run/create"
-            f"?project={project_id}&authuser={authuser}&region={region}"
+            f"?project={project_id}&authuser={authuser}"
         )
-        log.info(f"🌐 step4 — region={region}")
+        log.info("🌐 step4")
 
         await page.goto(run_url, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(5000)
 
+        # ✅ GC.py
         image_found = False
         try:
             label = page.get_by_text("Container Image URL").first
@@ -273,7 +273,7 @@ class CloudConsole:
                 raise RuntimeError(f"فشل Create: {e2}")
 
     # ═══════════════════════════════════════
-    # STEP 5
+    # STEP 5 — كيما GC.py
     # ═══════════════════════════════════════
 
     async def step5_get_deployed_url(self, page):
