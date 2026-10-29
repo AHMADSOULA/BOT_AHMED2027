@@ -41,85 +41,82 @@ class CloudConsole:
     # ═══════════════════════════════════════
 
     async def step1_welcome_screen(self, page):
-        """
-        Handle the Google welcome screen normally:
-        scroll to the bottom of the page and click a visible Next/Continue button.
-        If the page is not a welcome screen, leave it unchanged.
-        """
         log.info("🚀 step1")
+        await self._shot(page, "📸 الخطوة 2: صفحة Welcome قبل الضغط")
 
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=10000)
         except Exception:
             pass
-        await page.wait_for_timeout(1500)
+        await page.wait_for_timeout(1000)
 
-        # Try scrolling both the document and keyboard focus to the bottom.
-        for _ in range(3):
-            try:
-                await page.evaluate("""
-                    () => {
-                        window.scrollTo(0, document.documentElement.scrollHeight);
-                        const candidates = Array.from(document.querySelectorAll(
-                            'main, [role="main"], article, .VfPpkd-P5QLlc, .aUX8gc'
-                        ));
-                        for (const el of candidates) {
-                            if (el.scrollHeight > el.clientHeight + 20) {
-                                el.scrollTop = el.scrollHeight;
-                            }
-                        }
-                    }
-                """)
-                await page.keyboard.press("End")
-                await page.wait_for_timeout(700)
-            except Exception:
-                pass
-
-        # Click only a normal, visible button with a matching label.
-        labels = ["Next", "Continue", "I understand", "Agree and continue"]
-        for label in labels:
-            try:
-                button = page.get_by_role(
-                    "button",
-                    name=re.compile(r"^\\s*" + re.escape(label) + r"\\s*$", re.I)
-                ).first
-                if await button.is_visible(timeout=900):
-                    if await button.is_enabled():
-                        await button.click(timeout=5000)
-                        log.info("✅ Welcome action clicked: %s", label)
-                        await page.wait_for_timeout(1200)
-                        return
-            except Exception:
-                continue
-
-        # Some Google pages expose the action as a link or generic button.
+        # The Google welcome page may show a circular down-arrow control.
+        # Click a visible scroll/down control if one is present.
         try:
             clicked = await page.evaluate("""
                 () => {
-                    const labels = ['next', 'continue', 'i understand', 'agree and continue'];
-                    const els = Array.from(document.querySelectorAll(
-                        'button, a, [role="button"], input[type="submit"]'
-                    ));
+                    const visible = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+                    const els = Array.from(document.querySelectorAll('button, [role="button"], a'));
                     for (const el of els) {
-                        const text = (el.innerText || el.value || el.getAttribute('aria-label') || '')
-                            .trim().toLowerCase();
-                        const visible = !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
-                        if (!visible || el.disabled) continue;
-                        if (labels.includes(text)) {
+                        if (!visible(el) || el.disabled) continue;
+                        const label = [el.innerText, el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-tooltip')]
+                            .filter(Boolean).join(' ').toLowerCase();
+                        const svg = el.querySelector('svg');
+                        const icon = svg ? ((svg.getAttribute('aria-label') || '') + ' ' + (svg.innerHTML || '')).toLowerCase() : '';
+                        const r = el.getBoundingClientRect();
+                        const nearBottom = r.top > window.innerHeight * 0.45;
+                        const downLabel = /scroll down|more|down|next|continue|read more/.test(label);
+                        const downIcon = /arrow_downward|keyboard_arrow_down|expand_more|chevron_down/.test(icon);
+                        if ((downLabel || downIcon) && nearBottom) {
                             el.click();
-                            return text;
+                            return {clicked: true, label: label.slice(0, 80), x: Math.round(r.x), y: Math.round(r.y)};
                         }
                     }
-                    return null;
+                    return {clicked: false};
                 }
             """)
-            if clicked:
-                log.info("✅ Welcome action clicked: %s", clicked)
-                await page.wait_for_timeout(1200)
-            else:
-                log.info("ℹ️ No welcome Next button found; page left unchanged.")
-        except Exception as exc:
-            log.warning("⚠️ Welcome screen action: %s", str(exc)[:160])
+            if clicked and clicked.get("clicked"):
+                log.info("✅ ضغط سهم النزول/التالي: %s", clicked.get("label", "button"))
+                await page.wait_for_timeout(900)
+                await self._shot(page, "📸 الخطوة 2: بعد الضغط على سهم النزول")
+        except Exception as e:
+            log.warning("⚠️ تعذر الضغط على سهم النزول: %s", str(e)[:150])
+
+        # Also scroll the document and any internal scrollable panel to the bottom.
+        try:
+            await page.evaluate("""
+                () => {
+                    window.scrollTo({top: document.documentElement.scrollHeight, behavior: 'instant'});
+                    const all = Array.from(document.querySelectorAll('body *'));
+                    for (const el of all) {
+                        const st = getComputedStyle(el);
+                        if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 30) {
+                            el.scrollTop = el.scrollHeight;
+                        }
+                    }
+                }
+            """)
+            await page.keyboard.press("End")
+            await page.wait_for_timeout(800)
+            await self._shot(page, "📸 الخطوة 2: أسفل صفحة Welcome")
+        except Exception as e:
+            log.warning("⚠️ scroll: %s", str(e)[:150])
+
+        # Click only an enabled, visible standard action button.
+        for label in ["Next", "Continue", "I understand", "Agree and continue"]:
+            try:
+                button = page.get_by_role("button", name=label, exact=True).first
+                if await button.is_visible(timeout=700) and await button.is_enabled():
+                    await button.click(timeout=4000)
+                    log.info("✅ تم الضغط على %s", label)
+                    await page.wait_for_timeout(1000)
+                    await self._shot(page, f"📸 بعد الضغط على {label}")
+                    return
+            except Exception:
+                continue
+
+        log.info("ℹ️ ما لقيتش زر Next ظاهر في هذه الصفحة")
+        await self._shot(page, "📸 صفحة Welcome بعد محاولة النزول")
 
     # ═══════════════════════════════════════
     # STEP 2
