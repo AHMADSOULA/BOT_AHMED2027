@@ -19,8 +19,14 @@ class Config:
         "docker.io/ajndjd2/ahmed-vip1"
     ).strip()
 
-    # مسار قاعدة بيانات المستخدمين
     DB_PATH = os.getenv("DB_PATH", "/app/data/bot.db").strip()
+
+    # مجلد ملفات السجلات
+    LOG_DIR = os.getenv("LOG_DIR", "/app/logs").strip()
 
 
 config = Config()
+
+# إنشاء المجلدات عند بدء تحميل الإعدادات
+os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
+os.makedirs(config.LOG_DIR, exist_ok=True)
