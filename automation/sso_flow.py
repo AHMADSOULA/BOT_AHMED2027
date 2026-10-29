@@ -115,7 +115,7 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
         flag = "🇧🇪"
 
     log.info(f"🚀 SSO — project={project_id}")
-    console = CloudConsole(context, sender=sender, user_tag=user_tag)
+    console = CloudConsole(context, sender=None, user_tag=user_tag)
 
     page = await context.new_page()
     try:
@@ -130,7 +130,6 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             await page.goto(sso_url, wait_until="commit", timeout=40000)
 
         await page.wait_for_timeout(1500)
-        await console._shot(page, "📸 الخطوة 1/7: فتح رابط الجلسة")
 
         blocked = await _is_blocked(page)
         if blocked:
@@ -147,7 +146,6 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
         except Exception: pass
 
         await page.wait_for_timeout(1000)
-        await console._shot(page, "📸 الخطوة 2/7: صفحة Welcome بعد المعالجة")
 
         # 3
         if sender:
@@ -159,7 +157,6 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
         except Exception: pass
 
         await page.wait_for_timeout(1000)
-        await console._shot(page, "📸 الخطوة 3/7: بعد محاولة شروط الخدمة")
 
         # 4
         if sender:
@@ -182,7 +179,6 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             await page.screenshot(path="/tmp/blocked.png")
             return {"success": False, "error": "signin", "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
 
-        await console._shot(page, "📸 الخطوة 4/7: صفحة Google Cloud Console")
         authuser = extract_authuser(page.url)
 
         # 5
@@ -192,9 +188,7 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             
         try:
             await console.step3_enable_api(page, project_id, authuser)
-            await console._shot(page, "📸 الخطوة 5/7: تفعيل API")
-        except Exception as e:
-            log.warning("⚠️ API: %s", str(e)[:150])
+        except Exception: pass
 
         # 6
         if sender:
@@ -203,7 +197,6 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             
         try:
             await console.step4_create_cloud_run(page, project_id, authuser, image, region=region)
-            await console._shot(page, "📸 الخطوة 6/7: إعداد Cloud Run بعد Create")
         except Exception as e:
             await page.screenshot(path="/tmp/blocked.png")
             return {"success": False, "error": "step4_failed", "message": str(e)[:200], "screenshot": "/tmp/blocked.png"}
@@ -214,7 +207,6 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
         try:
             final_url = await console.step5_get_deployed_url(page)
             domain = extract_domain_from_service_url(final_url)
-            await console._shot(page, "📸 الخطوة 7/7: تم العثور على رابط الخدمة")
         except Exception as e:
             await page.screenshot(path="/tmp/blocked.png")
             return {"success": False, "error": "step5_failed", "message": str(e)[:200], "screenshot": "/tmp/blocked.png"}
