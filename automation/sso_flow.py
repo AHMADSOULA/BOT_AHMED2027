@@ -1,6 +1,8 @@
 """
 automation/sso_flow.py
-تنسيق العملية — رسالة وحدة تتغير + region تلقائي
+- رسالة وحدة كتبدل مع الخطوات
+- سريع وما كياكلش الرام بزاف
+- كيكتشف إلا رجع لصفحة تسجيل الدخول (Sign in) وكيرجع account_deleted
 """
 import re
 import asyncio
@@ -41,20 +43,6 @@ def extract_email_from_url(url: str) -> str:
         m = re.search(r'Email=([^&\s#]+@qwiklabs\.net)', url or "")
         if m:
             return m.group(1)
-        m = re.search(r'([a-zA-Z0-9\.\-]+@qwiklabs\.net)', url or "")
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return None
-
-
-def extract_password_from_url(url: str) -> str:
-    try:
-        m = re.search(r'Password=([^&\s#]+)', url or "")
-        if m:
-            from urllib.parse import unquote
-            return unquote(m.group(1))
     except Exception:
         pass
     return None
@@ -74,7 +62,6 @@ async def _is_dashboard(page) -> bool:
                     !url.includes('accounts.google.com')) {
                     const body = (document.body.innerText || '').toLowerCase();
                     if (body.includes('sign in') && body.includes('google account')) return false;
-                    if (body.includes('account deleted')) return false;
                     return true;
                 }
                 return false;
@@ -85,31 +72,16 @@ async def _is_dashboard(page) -> bool:
 
 
 async def _is_blocked(page) -> str:
+    """Return account_deleted only for explicit deletion/closure messages."""
     try:
         return await page.evaluate("""
             () => {
-                const url = window.location.href.toLowerCase();
                 const body = (document.body.innerText || '').toLowerCase();
-
-                if (body.includes('account deleted') ||
-                    body.includes('account has been deleted') ||
-                    body.includes('this account was recently deleted')) {
-                    return 'account_deleted';
-                }
-
-                if (url.includes('accounts.google.com/signin') && !url.includes('addsession')) {
-                    return 'signin';
-                }
-
-                if (body.includes('session expired') ||
-                    body.includes('no longer valid') ||
-                    body.includes('invalid link') ||
-                    body.includes('sign in to continue') ||
-                    body.includes('link you followed has expired')) {
-                    return 'expired';
-                }
-
-                return null;
+                const explicit = [
+                    'account deleted', 'account has been deleted', 'account is closed',
+                    'your account has been deleted', 'تم حذف الحساب', 'تم إغلاق الحساب'
+                ];
+                return explicit.some(t => body.includes(t)) ? 'account_deleted' : null;
             }
         """)
     except Exception:
@@ -124,151 +96,130 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
     if _has_password(sso_url):
         region = "us-central1"
         flag = "🇺🇸"
-        log.info("🇺🇸 Region = US")
     else:
         region = "europe-west1"
         flag = "🇧🇪"
-        log.info("🇧🇪 Region = EU")
 
     log.info(f"🚀 SSO — project={project_id}")
-
     console = CloudConsole(context, sender=sender, user_tag=user_tag)
-
-    status_msg = None
-    if sender:
-        try:
-            status_msg = await sender.reply_text("🚀 جاري التنفيذ... [0/8]")
-        except Exception:
-            status_msg = None
-
-    async def update_status(step, text=""):
-        if not status_msg:
-            return
-        try:
-            await status_msg.edit_text(f"🚀 جاري التنفيذ... [{step}/8] {text}")
-        except Exception:
-            pass
 
     page = await context.new_page()
     try:
         # 1
-        await update_status(1, "فتح الرابط")
+        if sender:
+            try: await sender.edit_text("⏳ جاري التنفيذ... [1/6] فتح الرابط")
+            except: pass
+            
         try:
-            await page.goto(sso_url, wait_until="domcontentloaded", timeout=60000)
+            await page.goto(sso_url, wait_until="domcontentloaded", timeout=40000)
         except Exception:
-            await page.goto(sso_url, wait_until="commit", timeout=60000)
+            await page.goto(sso_url, wait_until="commit", timeout=40000)
 
-        await page.wait_for_timeout(2500)
+        await page.wait_for_timeout(1500)
+        await console._shot(page, "📸 الخطوة 1/7: فتح رابط الجلسة")
 
         blocked = await _is_blocked(page)
         if blocked:
-            log.warning(f"❌ {blocked}")
-            await console._shot(page, f"❌ {blocked}")
-            messages_map = {
-                "account_deleted": "❌ الحساب محذوف — SSO منتهي",
-                "signin": "❌ رجعنا لصفحة تسجيل الدخول — SSO منتهي",
-                "expired": "❌ الرابط منتهي",
-            }
-            return {"success": False, "error": blocked, "message": messages_map.get(blocked, "❌ SSO منتهي")}
+            await page.screenshot(path="/tmp/blocked.png")
+            return {"success": False, "error": blocked, "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
 
         # 2
-        await update_status(2, "TOS")
+        if sender:
+            try: await sender.edit_text("⏳ جاري التنفيذ... [2/6] شروط الخدمة TOS")
+            except: pass
+            
         try:
             await console.step1_welcome_screen(page)
         except Exception as e:
-            log.warning(f"⚠️ step1: {e}")
-
-        await page.wait_for_timeout(1500)
-
-        blocked = await _is_blocked(page)
-        if blocked:
-            log.warning(f"❌ {blocked} بعد TOS")
-            await console._shot(page, f"❌ {blocked}")
-            return {"success": False, "error": blocked, "message": "❌ SSO منتهي بعد TOS"}
+            log.warning(f"step1 welcome failed: {e}")
+        await console._shot(page, "📸 الخطوة 2/7: صفحة Welcome بعد النزول والمتابعة")
+        await page.wait_for_timeout(1000)
 
         # 3
-        await update_status(3, "Terms Dialog")
+        if sender:
+            try: await sender.edit_text("⏳ جاري التنفيذ... [3/6] الموافقة Terms")
+            except: pass
+            
         try:
             await console.step2_terms_dialog(page)
         except Exception as e:
-            log.warning(f"⚠️ step2: {e}")
-
-        await page.wait_for_timeout(1500)
+            log.warning(f"step2 terms failed: {e}")
+        await console._shot(page, "📸 الخطوة 3/7: فحص صفحة الموافقة")
+        await page.wait_for_timeout(1000)
 
         # 4
-        log.info("⏳ نستناو Dashboard...")
+        if sender:
+            try: await sender.edit_text("⏳ جاري التنفيذ... [4/6] انتظار Dashboard")
+            except: pass
+
         dashboard_ok = False
-        for i in range(20):
+        for i in range(60): # انتظر حتى دقيقة لانتقال الصفحة
             await page.wait_for_timeout(1000)
             blocked = await _is_blocked(page)
             if blocked:
-                log.warning(f"❌ {blocked} بعد {i+1}s")
-                await console._shot(page, f"❌ {blocked}")
-                messages_map = {
-                    "account_deleted": "❌ الحساب محذوف — SSO منتهي",
-                    "signin": "❌ SSO منتهي — رجعنا لصفحة تسجيل الدخول",
-                    "expired": "❌ الرابط منتهي",
-                }
-                return {"success": False, "error": blocked, "message": messages_map.get(blocked, "❌ SSO منتهي")}
+                await page.screenshot(path="/tmp/blocked.png")
+                return {"success": False, "error": blocked, "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
 
             if await _is_dashboard(page):
                 dashboard_ok = True
-                log.info(f"✅ Dashboard بعد {i+1}s")
                 break
 
         if not dashboard_ok:
-            await console._shot(page, "❌ ما وصلناش Dashboard")
-            return {"success": False, "error": "no_dashboard", "message": "❌ ما وصلناش Dashboard"}
+            shot = "/tmp/blocked.png"
+            try:
+                await page.screenshot(path=shot, timeout=15000, animations="disabled")
+            except Exception as e:
+                log.warning(f"final screenshot failed: {e}")
+                shot = None
+            return {"success": False, "error": "signin_or_consent_pending", "message": "❌ لم نصل إلى Dashboard. قد تحتاج صفحة تسجيل الدخول أو الموافقة إلى تدخل يدوي؛ هذا لا يعني أن الحساب محذوف.", "screenshot": shot}
 
         authuser = extract_authuser(page.url)
-        log.info(f"🔑 authuser = {authuser}")
 
         # 5
-        await update_status(4, "تفعيل API")
+        if sender:
+            try: await sender.edit_text("⏳ جاري التنفيذ... [5/6] تفعيل API")
+            except: pass
+            
         try:
             await console.step3_enable_api(page, project_id, authuser)
         except Exception as e:
-            log.warning(f"⚠️ step3: {e}")
+            log.warning(f"step3 API failed: {e}")
+        await console._shot(page, "📸 الخطوة 4/7: صفحة تفعيل Cloud Run API")
 
         # 6
-        await update_status(5, f"إنشاء Cloud Run {flag}")
+        if sender:
+            try: await sender.edit_text("⏳ جاري التنفيذ... [6/6] إنشاء Cloud Run")
+            except: pass
+            
+        await console._shot(page, "📸 الخطوة 5/7: قبل إعداد خدمة Cloud Run")
         try:
             await console.step4_create_cloud_run(page, project_id, authuser, image, region=region)
+            await console._shot(page, "📸 الخطوة 6/7: تم إرسال طلب إنشاء الخدمة")
         except Exception as e:
-            await console._shot(page, "❌ step4 فشل")
-            return {"success": False, "error": "step4_failed", "message": str(e)[:200]}
+            shot = "/tmp/blocked.png"
+            try: await page.screenshot(path=shot, timeout=15000, animations="disabled")
+            except Exception: shot = None
+            return {"success": False, "error": "step4_failed", "message": str(e)[:200], "screenshot": shot}
 
-        # 7
-        await update_status(7, "Create")
-        await page.wait_for_timeout(400)
+        await page.wait_for_timeout(500)
 
-        # 8
-        await update_status(8, "انتظار الرابط")
+        # 7 - انتظار الرابط
         try:
             final_url = await console.step5_get_deployed_url(page)
             domain = extract_domain_from_service_url(final_url)
         except Exception as e:
-            await console._shot(page, "❌ step5 فشل")
-            return {"success": False, "error": "step5_failed", "message": str(e)[:200]}
-
-        if status_msg:
-            try:
-                await status_msg.delete()
-            except Exception:
-                pass
+            shot = "/tmp/blocked.png"
+            try: await page.screenshot(path=shot, timeout=15000, animations="disabled")
+            except Exception: shot = None
+            return {"success": False, "error": "step5_failed", "message": str(e)[:200], "screenshot": shot}
 
     finally:
-        try:
-            await page.close()
-        except Exception:
-            pass
+        try: await page.close()
+        except: pass
 
     return {
         "success": True,
-        "project_id": project_id,
-        "authuser": authuser,
         "final_url": final_url,
         "domain": domain,
-        "region": region,
         "flag": flag,
     }
