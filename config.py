@@ -7,6 +7,8 @@ load_dotenv()
 class Config:
     # === Telegram ===
     BOT_TOKEN = os.getenv("BOT_TOKEN")
+    # Telegram administrator ID; set ADMIN_ID in Render Environment.
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
     # === Cloud Run ===
     DEFAULT_IMAGE = os.getenv("DEFAULT_IMAGE", "docker.io/ajndjd2/ahmed-vip1")
