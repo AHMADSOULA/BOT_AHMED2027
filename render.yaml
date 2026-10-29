@@ -1,0 +1,24 @@
+services:
+  - type: worker
+    name: cloud-run-telegram-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: HEADLESS
+        value: "true"
+      - key: DEFAULT_IMAGE
+        value: docker.io/ajndjd2/ahmed-vip1
+      - key: PAGE_TIMEOUT
+        value: "60"
+      - key: NAV_TIMEOUT
+        value: "120"
+      - key: DB_PATH
+        value: /tmp/bot.db
+      - key: CHROME_PROFILE_DIR
+        value: /tmp/chrome_profile
+      - key: LOG_DIR
+        value: /tmp/logs
