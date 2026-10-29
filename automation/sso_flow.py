@@ -61,6 +61,17 @@ async def _is_dashboard(page) -> bool:
                     !url.includes('signin') &&
                     !url.includes('accounts.google.com')) {
                     const body = (document.body.innerText || '').toLowerCase();
+                    // Terms/Welcome pages can live on console.cloud.google.com too;
+                    // do not treat them as the Cloud Console dashboard.
+                    const termsMarkers = [
+                        'welcome to your new account',
+                        'google terms of service',
+                        'i understand',
+                        'welcome'
+                    ];
+                    if (termsMarkers.some(marker => body.includes(marker)) &&
+                        !body.includes('cloud overview') &&
+                        !body.includes('cloud run')) return false;
                     if (body.includes('sign in') && body.includes('google account')) return false;
                     return true;
                 }

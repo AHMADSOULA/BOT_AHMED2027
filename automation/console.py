@@ -40,48 +40,62 @@ class CloudConsole:
     # STEP 1
     # ═══════════════════════════════════════
 
+    async def _click_visible_action(self, page, labels, step_name):
+        """Click a real, visible and enabled Google consent/continue control.
+
+        Google changes button markup and sometimes nests the consent UI in a
+        frame, so inspect all current frames and several accessible/text selectors.
+        Never force-enable a consent control.
+        """
+        selectors = []
+        for label in labels:
+            selectors.extend([
+                ("role", label),
+                ("text", label),
+            ])
+
+        # Re-read frames on each attempt because Google may add a frame late.
+        for _ in range(4):
+            for frame in list(page.frames):
+                for kind, label in selectors:
+                    try:
+                        if kind == "role":
+                            loc = frame.get_by_role("button", name=label, exact=False).first
+                        else:
+                            loc = frame.get_by_text(label, exact=True).first
+                        if await loc.is_visible(timeout=500):
+                            try:
+                                enabled = await loc.is_enabled()
+                            except Exception:
+                                enabled = True
+                            if enabled:
+                                await loc.click(timeout=2500)
+                                log.info(f"✅ {step_name}: clicked visible control '{label}'")
+                                await page.wait_for_timeout(1200)
+                                return True
+                    except Exception:
+                        continue
+            await page.wait_for_timeout(700)
+        return False
+
     async def step1_welcome_screen(self, page):
-        """Handle the normal Google Welcome screen without forcing consent."""
+        """Handle the Google Welcome screen if a normal continuation control exists."""
         log.info("🚀 step1 — Welcome")
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=12000)
         except Exception:
             pass
         await page.wait_for_timeout(1200)
-
-        # Google Skills pages can show a blue "I understand" button.
-        # Try accessible selectors in the main page and its frames.
         labels = ["I understand", "Got it", "Continue", "Next"]
-        for frame in page.frames:
-            for label in labels:
-                try:
-                    button = frame.get_by_role("button", name=label, exact=True).first
-                    if await button.is_visible(timeout=700):
-                        if await button.is_enabled():
-                            await button.click(timeout=2500)
-                            log.info(f"✅ Welcome button clicked: {label}")
-                            await page.wait_for_timeout(1200)
-                            return
-                except Exception:
-                    continue
-        log.info("ℹ️ No visible Welcome continuation button; page left for review")
+        if not await self._click_visible_action(page, labels, "Welcome"):
+            log.info("ℹ️ No visible enabled Welcome action; leaving page for review")
 
     async def step2_terms_dialog(self, page):
-        """Click only a visible, enabled consent button; never force-enable it."""
+        """Handle visible consent buttons; if consent is unavailable, report it clearly."""
         log.info("🚀 step2 — terms/consent")
         labels = ["I understand", "Agree and continue", "Accept", "Agree", "Continue"]
-        for frame in page.frames:
-            for label in labels:
-                try:
-                    button = frame.get_by_role("button", name=label, exact=True).first
-                    if await button.is_visible(timeout=700) and await button.is_enabled():
-                        await button.click(timeout=3000)
-                        log.info(f"✅ Consent/continue button clicked: {label}")
-                        await page.wait_for_timeout(1500)
-                        return
-                except Exception:
-                    continue
-        log.warning("⚠️ Consent button not found/enabled. Manual review may be required.")
+        if not await self._click_visible_action(page, labels, "Terms"):
+            log.warning("⚠️ Consent action not found/enabled. Manual review may be required.")
 
     # ═══════════════════════════════════════
     # STEP 3
