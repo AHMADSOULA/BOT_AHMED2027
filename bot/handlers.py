@@ -110,12 +110,12 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shot = result.get("screenshot")
             if shot and os.path.exists(shot):
                 with open(shot, "rb") as f:
-                    await update.message.reply_photo(photo=f, caption=f"❌ فشل في خطوة التنفيذ: {result.get('message', 'راجع الصورة')}")
+                    await update.message.reply_photo(photo=f, caption="❌ الحساب محذوف أو تم إغلاقه.")
                 try: os.remove(shot)
                 except: pass
                 await msg.delete()
             else:
-                await msg.edit_text(f"❌ فشل: {result.get('message') or result.get('error')}")
+                await msg.edit_text(f"❌ فشل: {result.get('message')}")
             return
 
         domain = result.get("domain")
