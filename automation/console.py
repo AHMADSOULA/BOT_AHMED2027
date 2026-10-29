@@ -3,6 +3,7 @@ automation/console.py
 كل خطوات Google Cloud Console — بلا تصوير عادي
 """
 import asyncio
+import re
 from playwright.async_api import expect
 from utils.logger import get_logger
 
@@ -21,7 +22,7 @@ class CloudConsole:
             return
         try:
             path = f"/tmp/shot_{int(asyncio.get_event_loop().time()*1000)}.png"
-            await page.screenshot(path=path, full_page=False, timeout=8000)
+            await page.screenshot(path=path, full_page=False, timeout=20000, animations="disabled")
             with open(path, "rb") as f:
                 try:
                     await self.sender.reply_photo(photo=f, caption=caption[:1000])
@@ -38,47 +39,36 @@ class CloudConsole:
 
     # ═══════════════════════════════════════
     # STEP 1
-    # ═══════════════════════════════════════
-
-    async def step1_welcome_screen(self, page):
+    # ═══════════════════════════════    async def step1_welcome_screen(self, page):
         log.info("🚀 step1")
-
         try:
-            await page.wait_for_load_state("networkidle", timeout=10000)
+            await page.wait_for_load_state("domcontentloaded", timeout=12000)
         except Exception:
             pass
-        await page.wait_for_timeout(1500)
+        await page.wait_for_timeout(1200)
 
+        # Scroll the page/document to the bottom; this reveals the final action on Welcome pages.
         try:
-            await page.keyboard.press("Enter")
-        except Exception:
-            pass
-
-        try:
-            button = page.locator("text='I understand'")
-            if await button.is_visible(timeout=3000):
-                await button.click()
-                log.info("✅ I understand")
+            await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+            await page.keyboard.press("End")
+            await page.wait_for_timeout(700)
         except Exception:
             pass
 
-        try:
-            await page.evaluate("""
-                () => {
-                    const kws = ['i understand', 'agree and continue', 'accept'];
-                    for (const el of document.querySelectorAll('button, a, [role="button"], input[type="submit"]')) {
-                        if (el.offsetParent === null || el.disabled) continue;
-                        const t = (el.innerText || el.value || '').trim().toLowerCase();
-                        for (const kw of kws) {
-                            if (t.includes(kw)) {
-                                try { el.click(); return; } catch (e) {}
-                            }
-                        }
-                    }
-                }
-            """)
-        except Exception:
-            pass
+        # Click only a visible, enabled, normal consent/continue action.
+        for label in ["Next", "Continue", "I understand", "Agree and continue"]:
+            try:
+                button = page.get_by_role("button", name=re.compile(r"^\s*" + re.escape(label) + r"\s*$", re.I)).first
+                if await button.is_visible(timeout=800) and await button.is_enabled():
+                    await button.click(timeout=5000)
+                    log.info("✅ Welcome action clicked: %s", label)
+                    await page.wait_for_timeout(1000)
+                    return
+            except Exception:
+                continue
+        log.info("ℹ️ No visible Welcome action found; continue checking the current page.")
+
+    pass
 
     # ═══════════════════════════════════════
     # STEP 2

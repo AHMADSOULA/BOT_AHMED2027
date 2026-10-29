@@ -6,6 +6,7 @@ automation/sso_flow.py
 """
 import re
 import asyncio
+import os
 from urllib.parse import urlparse, parse_qs
 
 from automation.console import CloudConsole
@@ -78,15 +79,10 @@ async def _is_blocked(page) -> str:
                 const url = window.location.href.toLowerCase();
                 const body = (document.body.innerText || '').toLowerCase();
 
-                // ✅ كشف صفحة تسجيل الدخول (Sign in) كيما فـ الصورة
-                if (url.includes('accounts.google.com') && url.includes('/signin')) {
-                    return 'account_deleted';
-                }
-                if (body.includes('sign in to continue') || body.includes('use your google account')) {
-                    return 'account_deleted';
-                }
+                // Sign-in or a loading page does not prove the account was deleted.
+                // Only return account_deleted when Google explicitly says the account is closed/deleted.
 
-                // ✅ كشف الحساب المحذوف
+                // Detect account deleted/closed only from explicit page text.
                 if (body.includes('account deleted') || 
                     body.includes('account has been deleted') || 
                     body.includes('account is closed') ||
@@ -118,6 +114,23 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
     console = CloudConsole(context, sender=None, user_tag=user_tag)
 
     page = await context.new_page()
+
+    async def send_step_shot(caption: str):
+        if not sender:
+            return
+        path = f"/tmp/cloud_step_{int(asyncio.get_event_loop().time() * 1000)}.png"
+        try:
+            await page.screenshot(path=path, full_page=False, timeout=20000, animations="disabled")
+            with open(path, "rb") as photo:
+                await sender.reply_photo(photo=photo, caption=caption[:900])
+        except Exception as exc:
+            log.warning("⚠️ screenshot %s: %s", caption, str(exc)[:180])
+        finally:
+            try:
+                if os.path.exists(path): os.remove(path)
+            except Exception:
+                pass
+
     try:
         # 1
         if sender:
@@ -130,11 +143,12 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             await page.goto(sso_url, wait_until="commit", timeout=40000)
 
         await page.wait_for_timeout(1500)
+        await send_step_shot("📸 الخطوة 1/7: فتح رابط الجلسة")
 
         blocked = await _is_blocked(page)
         if blocked:
-            await page.screenshot(path="/tmp/blocked.png")
-            return {"success": False, "error": blocked, "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
+            await page.screenshot(path="/tmp/blocked.png", timeout=20000, animations="disabled")
+            return {"success": False, "error": blocked, "message": ("❌ حساب محذوف أو مغلق" if blocked == "account_deleted" else "⚠️ صفحة تسجيل الدخول أو التحميل لم تكتمل؛ تحقق من جلسة Google Skills"), "screenshot": "/tmp/blocked.png"}
 
         # 2
         if sender:
@@ -143,8 +157,9 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             
         try:
             await console.step1_welcome_screen(page)
-        except Exception: pass
-
+        except Exception as exc:
+            log.warning("step1 welcome: %s", str(exc)[:180])
+        await send_step_shot("📸 الخطوة 2/7: صفحة Welcome بعد محاولة النزول والمتابعة")
         await page.wait_for_timeout(1000)
 
         # 3
@@ -154,8 +169,9 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             
         try:
             await console.step2_terms_dialog(page)
-        except Exception: pass
-
+        except Exception as exc:
+            log.warning("step2 terms: %s", str(exc)[:180])
+        await send_step_shot("📸 الخطوة 3/7: بعد فحص خطوة الموافقة")
         await page.wait_for_timeout(1000)
 
         # 4
@@ -168,16 +184,16 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             await page.wait_for_timeout(1000)
             blocked = await _is_blocked(page)
             if blocked:
-                await page.screenshot(path="/tmp/blocked.png")
-                return {"success": False, "error": blocked, "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
+                await page.screenshot(path="/tmp/blocked.png", timeout=20000, animations="disabled")
+                return {"success": False, "error": blocked, "message": ("❌ حساب محذوف أو مغلق" if blocked == "account_deleted" else "⚠️ صفحة تسجيل الدخول أو التحميل لم تكتمل؛ تحقق من جلسة Google Skills"), "screenshot": "/tmp/blocked.png"}
 
             if await _is_dashboard(page):
                 dashboard_ok = True
                 break
 
         if not dashboard_ok:
-            await page.screenshot(path="/tmp/blocked.png")
-            return {"success": False, "error": "signin", "message": "❌ حساب محذوف أو مغلق", "screenshot": "/tmp/blocked.png"}
+            await page.screenshot(path="/tmp/blocked.png", timeout=20000, animations="disabled")
+            return {"success": False, "error": "signin", "message": ("❌ حساب محذوف أو مغلق" if blocked == "account_deleted" else "⚠️ صفحة تسجيل الدخول أو التحميل لم تكتمل؛ تحقق من جلسة Google Skills"), "screenshot": "/tmp/blocked.png"}
 
         authuser = extract_authuser(page.url)
 
@@ -198,7 +214,7 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
         try:
             await console.step4_create_cloud_run(page, project_id, authuser, image, region=region)
         except Exception as e:
-            await page.screenshot(path="/tmp/blocked.png")
+            await page.screenshot(path="/tmp/blocked.png", timeout=20000, animations="disabled")
             return {"success": False, "error": "step4_failed", "message": str(e)[:200], "screenshot": "/tmp/blocked.png"}
 
         await page.wait_for_timeout(500)
@@ -208,7 +224,7 @@ async def run_sso_flow(context, sso_url: str, image: str, sender=None, user_tag=
             final_url = await console.step5_get_deployed_url(page)
             domain = extract_domain_from_service_url(final_url)
         except Exception as e:
-            await page.screenshot(path="/tmp/blocked.png")
+            await page.screenshot(path="/tmp/blocked.png", timeout=20000, animations="disabled")
             return {"success": False, "error": "step5_failed", "message": str(e)[:200], "screenshot": "/tmp/blocked.png"}
 
     finally:
