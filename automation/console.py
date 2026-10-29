@@ -3,6 +3,7 @@ automation/console.py
 كل خطوات Google Cloud Console — بلا تصوير عادي
 """
 import asyncio
+import re
 from playwright.async_api import expect
 from utils.logger import get_logger
 
@@ -60,18 +61,35 @@ class CloudConsole:
         except Exception as e:
             log.warning(f"⚠️ scroll Welcome: {e}")
 
-        # Click only a real visible/enabled button; do not force-enable consent controls.
-        for label in ("Next", "Continue", "I understand", "Agree and continue"):
+        # Google account welcome pages commonly use the exact "I understand" action.
+        # Try semantic button lookup first, then exact visible text if the UI has no button role.
+        for label in ("I understand", "Next", "Continue", "Agree and continue"):
             try:
-                button = page.get_by_role("button", name=re.compile(r"^\s*" + re.escape(label) + r"\s*$", re.I)).first
+                button = page.get_by_role(
+                    "button",
+                    name=re.compile(r"^\\s*" + re.escape(label) + r"\\s*$", re.I)
+                ).first
                 if await button.is_visible(timeout=700) and await button.is_enabled():
                     await button.click(timeout=5000)
                     log.info(f"✅ Welcome button clicked: {label}")
-                    await page.wait_for_timeout(1200)
+                    await page.wait_for_timeout(1500)
                     return True
             except Exception:
-                continue
-        log.info("ℹ️ No visible enabled Welcome continuation button; leaving page for review.")
+                pass
+
+            try:
+                text_locator = page.get_by_text(
+                    re.compile(r"^\\s*" + re.escape(label) + r"\\s*$", re.I)
+                ).last
+                if await text_locator.is_visible(timeout=700):
+                    await text_locator.click(timeout=5000)
+                    log.info(f"✅ Welcome action clicked by visible text: {label}")
+                    await page.wait_for_timeout(1500)
+                    return True
+            except Exception:
+                pass
+
+        log.warning("⚠️ Welcome action not found/enabled; leaving page for manual review.")
         return False
 
     async def step2_terms_dialog(self, page):
